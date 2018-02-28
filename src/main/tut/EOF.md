@@ -5,6 +5,8 @@ count: false
 
 ### A _type-driven_ approach to input processiEOF
 
+@blouerat
+
 ---
 class: middle
 
@@ -379,7 +381,7 @@ def run[F[_], A](
 
 ```tut:silent
 type Result[A] = Either[Error, A]
-type ResultST[A]  = StateT[Result, String, A]
+type ResultST[A] = StateT[Result, String, A]
 
 val toResultST: Parser ~> ResultST = new (Parser ~> ResultST) {
   val MS: MonadState[ResultST, String] =
@@ -494,12 +496,12 @@ def run[F[_], A](
   implicit M: MonadStateError[F, String, Error]
 ): F[A] =
   parser match {
-    case Pure(value) => M.point(value)
     case Exactly(char) =>
       for {
         head <- next
         _ <- whenM(head != char)(M.raiseError(Unexpected(head)))
       } yield head
+    case Pure(value) => M.point(value)
     case Or(parser1, parser2) =>
       M.get.flatMap { input =>
         M.handleError(run(parser1)) { _ =>
@@ -513,7 +515,7 @@ def run[F[_], A](
 
 ```tut:silent
 type Result[A] = Either[Error, A]
-type ResultST[A]  = StateT[Result, String, A]
+type ResultST[A] = StateT[Result, String, A]
 val toResultST: Parser ~> ResultST = new (Parser ~> ResultST) {
   val MS: MonadState[ResultST, String] = StateT.stateTMonadState[String, Result]
   val ME: MonadError[ResultST, Error] = StateT.stateTMonadError[String, Result, Error]
@@ -739,28 +741,39 @@ import someMany._
 ---
 
 ```tut:silent
-def runForget[A](parser: Parser[A, _])(input: String): Option[(A, String)] =
+def runForget[F[_], A](
+  parser: Parser[A, _]
+)(
+  implicit M: MonadStateError[F, String, Error]
+): F[A] =
   parser match {
-    case Exactly(char) => input
-                            .headOption
-                            .filter(_ == char)
-                            .map(_ -> input.tail)
-    case Pure(value) => Some((value, input))
-    case Or(parser1, parser2) => runForget(parser1)(input)
-                                  .orElse(runForget(parser2)(input))
-    case Bind(parser, f) =>
-      runForget(parser)(input).flatMap { case (result1, input1) =>
-        runForget(f(result1))(input1)
+    case Exactly(char) =>
+      for {
+        head <- next
+        _ <- whenM(head != char)(M.raiseError(Unexpected(head)))
+      } yield head
+    case Pure(value) => M.point(value)
+    case Or(parser1, parser2) =>
+      M.get.flatMap { input =>
+        M.handleError(runForget(parser1)) { _ =>
+          M.put(input) *> runForget(parser2)
+        }
       }
+    case Bind(parser, f) => runForget(parser).flatMap(a => runForget(f(a)))
   }
 ```
 --
 
 ```tut:silent
-def run[A](parser: Parser[A, True])(input: String): Option[(A, String)] =
-  runForget(parser)(input)
+type Result[A] = Either[Error, A]
+type ResultST[A]  = StateT[Result, String, A]
+def toResultST[A](parser: Parser[A, True]): ResultST[A] = {
+  val MS: MonadState[ResultST, String] = StateT.stateTMonadState[String, Result]
+  val ME: MonadError[ResultST, Error] = StateT.stateTMonadError[String, Result, Error]
+  runForget(parser)(MonadStateError(MS, ME))
+}
+def eval[A](parser: Parser[A, True])(input: String): Result[A] = toResultST(parser).eval(input)
 ```
-
 ---
 
 ```tut:book
@@ -769,13 +782,13 @@ val aOrBs = some(wrapped(aOrB))
 --
 
 ```tut
-run(aOrBs)("")
-run(aOrBs)("abcd")
+eval(aOrBs)("")
+eval(aOrBs)("abcd")
 ```
 --
 
 ```tut
-run(aOrBs)("(a)(b)(b)(a)cd")
+eval(aOrBs)("(a)(b)(b)(a)cd")
 ```
 --
 
@@ -785,7 +798,7 @@ val maybeAB = maybe(aOrB)
 --
 
 ```tut:fail
-run(maybeAB)("")
+eval(maybeAB)("")
 ```
 
 ---
@@ -800,12 +813,12 @@ def woops: Parser[Unit, True] = Exactly('$').flatMap(_ => stupid)
 --
 
 ```tut
-run(woops)("")
+eval(woops)("")
 ```
 --
 
 ```tut:fail
-run(woops)("$")
+eval(woops)("$")
 ```
 ---
 class: middle, poem
@@ -823,3 +836,13 @@ class: middle
 ![Sisyphus comic](img/sisyphus_comic.png)
 
 [Existential Comics](http://existentialcomics.com/comic/29)
+---
+class: black, center, middle, hidden-slide-number
+
+# Thank you
+---
+###Reading list
+
+* Functional Programming in Scala, _Paul Chiusano and Runar Bjarnason_
+* Type-Driven Development with Idris, _Edwin Brady_
+* Monadic parsing in Haskell, _Graham Hutton and Erik Meijer_
