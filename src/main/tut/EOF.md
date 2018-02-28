@@ -566,4 +566,260 @@ eval(protocol)("3:abcdefg42")
 --
 
 #🍾
+---
 
+#Parser combinators in Idris
+
+```idris
+data Grammar : (tok : Type) -> (consumes : Bool) -> Type -> Type where
+     Empty : (val : ty) -> Grammar tok False ty
+     Terminal : (tok -> Maybe a) -> Grammar tok True a
+     NextIs : (tok -> Bool) -> Grammar tok False tok
+     EOF : Grammar tok False ()
+
+     Fail : String -> Grammar tok c ty
+     Commit : Grammar tok False ()
+
+     SeqEat : Grammar tok True a -> Inf (a -> Grammar tok c2 b) ->
+              Grammar tok True b
+     SeqEmpty : {c1, c2 : Bool} ->
+                Grammar tok c1 a -> (a -> Grammar tok c2 b) ->
+                Grammar tok (c1 || c2) b
+     Alt : {c1, c2 : Bool} ->
+           Grammar tok c1 ty -> Grammar tok c2 ty ->
+           Grammar tok (c1 && c2) ty
+
+(>>=) : {c1 : Bool} ->
+        Grammar tok c1 a ->
+        inf c1 (a -> Grammar tok c2 b) ->
+        Grammar tok (c1 || c2) b
+(>>=) {c1 = False} = SeqEmpty
+(>>=) {c1 = True} = SeqEat
+```
+
+---
+
+```tut:silent
+sealed trait Bool {
+  type If[T <: Out, F <: Out, Out] <: Out
+}
+sealed trait True extends Bool {
+  type If[T <: Out, F <: Out, Out] = T
+}
+sealed trait False extends Bool {
+  type If[T <: Out, F <: Out, Out] = F
+}
+
+type &&[A <: Bool, B <: Bool] = A#If[B, False, Bool]
+type ||[A <: Bool, B <: Bool] = A#If[True, B, Bool]
+```
+--
+
+```tut:silent
+object Bool {
+  sealed trait Refl[A <: Bool, B <: Bool]
+
+  object Refl extends Refl0
+
+  trait Refl0 extends Refl1 {
+    implicit def reflAndTrue[A <: Bool]: Refl[A && True, A] = null
+    implicit def reflAndFalse[A <: Bool]: Refl[A && False, False] = null
+  }
+
+  trait Refl1 {
+    implicit def reflOrTrue[A <: Bool]: Refl[A || True, True] = null
+    implicit def reflOrFalse[A <: Bool]: Refl[A || False, A] = null
+  }
+}
+
+import Bool._
+```
+---
+
+```tut:silent
+sealed trait Parser[A, X <: Bool]
+```
+--
+
+```tut:silent
+case class Exactly(char: Char) extends Parser[Char, True]
+```
+--
+
+```tut:silent
+case class Pure[A](value: A) extends Parser[A, False]
+```
+--
+
+```tut:silent
+case class Or[A, X1 <: Bool, X2 <: Bool](
+  parser1: Parser[A, X1],
+  parser2: Parser[A, X2]
+) extends Parser[A, X1 && X2]
+```
+--
+
+```tut:silent
+case class Bind[A, X1 <: Bool, B, X2 <: Bool](
+  parser: Parser[A, X1],
+  f: A => Parser[B, X2]
+) extends Parser[B, X1 || X2]
+
+```
+---
+
+```tut:silent
+object Parser {
+  sealed trait Parser[A, X <: Bool] { self =>
+    def map[B](f: A => B): Parser[B, X] =
+      Bind(self, (a: A) => Pure(f(a))).refl
+    def flatMap[B, X2 <: Bool](f: A => Parser[B, X2]): Parser[B, X || X2] =
+      Bind(self, f)
+    def refl[X2 <: Bool](implicit refl: Refl[X, X2]): Parser[A, X2] =
+      this.asInstanceOf[Parser[A, X2]]
+  }
+
+  case class Exactly(char: Char) extends Parser[Char, True]
+  case class Pure[A](value: A) extends Parser[A, False]
+  case class Or[A, X1 <: Bool, X2 <: Bool](
+    parser1: Parser[A, X1],
+    parser2: Parser[A, X2]
+  ) extends Parser[A, X1 && X2]
+  case class Bind[A, X1 <: Bool, B, X2 <: Bool](
+    parser: Parser[A, X1],
+    f: A => Parser[B, X2]
+  ) extends Parser[B, X1 || X2]
+}
+
+import Parser._
+```
+---
+
+```tut:silent
+val a: Parser[Char, True] = Exactly('a')
+val b: Parser[Char, True] = Exactly('b')
+```
+--
+
+```tut:silent
+val aOrB: Parser[Char, True] = Or(a, b)
+```
+--
+
+```tut:silent
+def wrapped[A, X <: Bool](parser: Parser[A, X]): Parser[A, True] =
+  for {
+    _ <- Exactly('(')
+    a <- parser
+    _ <- Exactly(')')
+  } yield a
+```
+--
+
+```tut:silent
+def maybe[A, X <: Bool](parser: Parser[A, X]): Parser[Option[A], False] =
+  Or(parser.map(Option(_)), Pure(Option.empty[A])).refl
+```
+--
+
+```tut:silent
+object someMany {
+  def some[A, X <: Bool](parser: Parser[A, X]): Parser[List[A], X] =
+    parser.flatMap { a =>
+      many(parser).map(a :: _)
+    }.refl
+
+  def many[A, X <: Bool](parser: Parser[A, X]): Parser[List[A], False] =
+    Or(some(parser), Pure(List.empty[A])).refl
+}
+
+import someMany._
+```
+
+---
+
+```tut:silent
+def runForget[A](parser: Parser[A, _])(input: String): Option[(A, String)] =
+  parser match {
+    case Exactly(char) => input
+                            .headOption
+                            .filter(_ == char)
+                            .map(_ -> input.tail)
+    case Pure(value) => Some((value, input))
+    case Or(parser1, parser2) => runForget(parser1)(input)
+                                  .orElse(runForget(parser2)(input))
+    case Bind(parser, f) =>
+      runForget(parser)(input).flatMap { case (result1, input1) =>
+        runForget(f(result1))(input1)
+      }
+  }
+```
+--
+
+```tut:silent
+def run[A](parser: Parser[A, True])(input: String): Option[(A, String)] =
+  runForget(parser)(input)
+```
+
+---
+
+```tut:book
+val aOrBs = some(wrapped(aOrB))
+```
+--
+
+```tut
+run(aOrBs)("")
+run(aOrBs)("abcd")
+```
+--
+
+```tut
+run(aOrBs)("(a)(b)(b)(a)cd")
+```
+--
+
+```tut:book
+val maybeAB = maybe(aOrB)
+```
+--
+
+```tut:fail
+run(maybeAB)("")
+```
+
+---
+```tut:silent
+def stupid: Parser[Unit, False] = Pure(()).flatMap(_ => stupid)
+```
+--
+
+```tut:silent
+def woops: Parser[Unit, True] = Exactly('$').flatMap(_ => stupid)
+```
+--
+
+```tut
+run(woops)("")
+```
+--
+
+```tut:fail
+run(woops)("$")
+```
+---
+class: middle, poem
+
+![nein](img/nein.jpg)
+
+###Cynicism: The hope that someday you will have known better all along.
+
+Nein. A Manifesto, Eric Jarosinski
+---
+class: middle
+
+#One must imagine Sisyphus happy
+
+![Sisyphus comic](img/sisyphus_comic.png)
+
+[Existential Comics](http://existentialcomics.com/comic/29)
