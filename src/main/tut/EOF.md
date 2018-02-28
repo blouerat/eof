@@ -4,9 +4,19 @@ count: false
 # Parser Combinators
 
 ### A _type-driven_ approach to input processiEOF
+---
+class: bio, hidden-slide-number
+##Bastien Louërat
 
-@blouerat
+![beard](img/beard.gif)
 
+Developer @ **Habito**
+
+**Scala** background
+
+Rambling **@blouerat**
+
+_ctrl+u_ **github.com/blouerat**
 ---
 class: middle
 
@@ -60,6 +70,10 @@ background-image: url(img/yak.jpg)
 ---
 class: background-contain, hidden-slide-number
 background-image: url(img/etranger.jpg)
+
+---
+class: background-cover, hidden-slide-number
+background-image: url(img/utopya.jpg)
 
 ---
 
